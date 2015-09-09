@@ -15,13 +15,15 @@ import org.elasticsearch.common.inject.assistedinject.Assisted;
 import org.elasticsearch.index.analysis.AbstractTokenFilterFactory;
 import org.elasticsearch.index.Index;
 import org.apache.lucene.analysis.TokenStream;
+import org.elasticsearch.common.logging.ESLogger;
+import org.elasticsearch.common.logging.Loggers;
 
 import static org.elasticsearch.common.unit.TimeValue.timeValueSeconds;
 
 public class FileRemoteSynonymTokenFilterFactory extends AbstractTokenFilterFactory {
 
     private Environment environment;
-    private Settings settings;
+    public static ESLogger logger=Loggers.getLogger("synonym-remote");
 
     private static ScheduledExecutorService pool = Executors.newScheduledThreadPool(1);
 
@@ -29,12 +31,13 @@ public class FileRemoteSynonymTokenFilterFactory extends AbstractTokenFilterFact
     public FileRemoteSynonymTokenFilterFactory(Index index, @IndexSettings Settings indexSettings, Environment env, @Assisted String name, @Assisted Settings settings) {
         super(index, indexSettings, name, settings);
         this.environment = env;
-        this.settings = settings;
-
         String path = settings.get("remote_synonyms_path");
+
+
         if (path != null) {
             // 注册Monitor
-            pool.scheduleAtFixedRate(new FileRemoteMonitor(path), 10, 60, TimeUnit.SECONDS);
+            logger.info("load remote_synonyms_path {} ", path);
+            pool.scheduleAtFixedRate(new FileRemoteMonitor(path, env), 10, 60, TimeUnit.SECONDS);
         }
 
 

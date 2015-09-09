@@ -28,6 +28,7 @@ import java.io.Reader;
 import java.io.InputStreamReader;
 import java.net.URL;
 import org.elasticsearch.common.base.Charsets;
+import java.io.File;
 
 import static org.elasticsearch.common.unit.TimeValue.timeValueSeconds;
 
@@ -40,18 +41,21 @@ public class FileRemoteMonitor implements Runnable {
     private String lastModified;
 
     private SynonymMap synonymMap;
+    private Environment environment;
 
     private Analyzer analyzer;
 
-    public FileRemoteMonitor(String remoteAddr)
+    public FileRemoteMonitor(String remoteAddr, Environment env)
     {
         this.remoteAddr = remoteAddr;
         this.lastModified = null;
+        this.environment = env;
     }
 
     @Override
     public void run()
     {
+        logger.info("FileRemoteMonitor run");
         //超时设置
 		RequestConfig rc = RequestConfig.custom().setConnectionRequestTimeout(10*1000)
 				.setConnectTimeout(10*1000).setSocketTimeout(15*1000).build();
@@ -61,7 +65,7 @@ public class FileRemoteMonitor implements Runnable {
 
 		//设置请求头
 		if (lastModified != null) {
-			head.setHeader("If-Modified-Since", lastModified);
+			//head.setHeader("If-Modified-Since", lastModified);
 		}
 
         this.analyzer = new Analyzer() {
@@ -80,21 +84,29 @@ public class FileRemoteMonitor implements Runnable {
 
 			//返回200 才做操作
 			if(response.getStatusLine().getStatusCode()==200){
-
+                logger.info("FileRemoteMonitor load code");
 				if (!response.getLastHeader("Last-Modified").getValue().equalsIgnoreCase(lastModified)) {
+                    logger.info("FileRemoteMonitor load reader");
+                    //Reader rulesReader = new InputStreamReader(new URL(remoteAddr).openStream(), Charsets.UTF_8);
 
-                    Reader rulesReader = new InputStreamReader(new URL(remoteAddr).openStream(), Charsets.UTF_8);
+                    String filePath = "/synonys.txt";
+                    URL fileUrl = environment.resolveConfig(filePath);
+                    File file = new File(fileUrl.toURI());
 
+                    Reader rulesReader = new InputStreamReader(fileUrl.openStream(), Charsets.UTF_8);
+                    logger.info("FileRemoteMonitor load file");
                     SynonymMap.Builder parser = null;
 
                     parser = new SolrSynonymParser(true, true, analyzer);
                     ((SolrSynonymParser) parser).parse(rulesReader);
-
+                    logger.info("FileRemoteMonitor build");
                     synonymMap = parser.build();
                     lastModified = response.getLastHeader("Last-Modified").getValue();
 				}
 			}else if (response.getStatusLine().getStatusCode()==304) {
-				//没有修改，不做操作
+                logger.info("FileRemoteMonitor file nothing change");
+                //没有修改，不做操作
+
 				//noop
 			}else{
 				logger.info("remote_synonyms_path {} return bad code {}" , remoteAddr , response.getStatusLine().getStatusCode() );
