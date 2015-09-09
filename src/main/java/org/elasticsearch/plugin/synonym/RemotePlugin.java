@@ -1,9 +1,13 @@
-package org.elasticsearch.plugin.example;
+package org.elasticsearch.plugin.synonym;
+
 import org.elasticsearch.common.collect.Lists;
 import org.elasticsearch.common.inject.Module;
 import org.elasticsearch.plugins.AbstractPlugin;
+import org.elasticsearch.index.analysis.AnalysisModule;
+import org.apache.lucene.analysis.Tokenizer;
 
 import java.util.Collection;
+import org.elasticsearch.index.synonym.FileRemoteSynonymTokenFilterFactory;
 
 public class RemotePlugin extends AbstractPlugin {
     @Override public String name() {
@@ -14,10 +18,10 @@ public class RemotePlugin extends AbstractPlugin {
         return "synonym remote load doc";
     }
 
-    @Override
-    public Collection<Class<? extends Module>> modules() {
-        Collection<Class<? extends Module>> modules = Lists.newArrayList();
-        modules.add(ExampleRestModule.class);
-        return modules;
+    @Override public void processModule(Module module) {
+        if (module instanceof AnalysisModule) {
+            AnalysisModule analysisModule = (AnalysisModule) module;
+            ((AnalysisModule) module).addTokenFilter("file_remote_synonym", FileRemoteSynonymTokenFilterFactory.class);
+        }
     }
 }
