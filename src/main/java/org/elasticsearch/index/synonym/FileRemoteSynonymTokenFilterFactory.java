@@ -47,6 +47,18 @@ import java.net.URL;
 import org.elasticsearch.common.base.Charsets;
 import java.io.File;
 
+import org.elasticsearch.index.analysis.TokenizerFactory;
+import org.elasticsearch.index.analysis.TokenizerFactoryFactory;
+import org.elasticsearch.indices.IndicesService;
+import org.elasticsearch.indices.analysis.IndicesAnalysisService;
+import java.util.Map;
+import org.elasticsearch.threadpool.ThreadPool;
+import org.elasticsearch.ElasticsearchIllegalArgumentException;
+import java.util.concurrent.ScheduledFuture;
+import org.elasticsearch.indices.IndicesLifecycle;
+//import org.elasticsearch.index.service.IndexService;
+import org.elasticsearch.index.settings.IndexSettings;
+
 import static org.elasticsearch.common.unit.TimeValue.timeValueSeconds;
 
 public class FileRemoteSynonymTokenFilterFactory extends AbstractTokenFilterFactory {
@@ -56,25 +68,47 @@ public class FileRemoteSynonymTokenFilterFactory extends AbstractTokenFilterFact
     private String remoteAddr;
     private String lastModified;
     private Analyzer analyzer;
+    //private String indexName;
+
+    private volatile ScheduledFuture scheduledFuture;
 
     public static ESLogger logger = Loggers.getLogger("synonym-remote");
 
-    private static ScheduledExecutorService pool = Executors.newScheduledThreadPool(1);
+    //private static ScheduledExecutorService pool = Executors.newScheduledThreadPool(1);
     private static CloseableHttpClient httpclient = HttpClients.createDefault();
 
     @Inject
-    public FileRemoteSynonymTokenFilterFactory(Index index, @IndexSettings Settings indexSettings, Environment env, @Assisted String name, @Assisted Settings settings) {
+    public FileRemoteSynonymTokenFilterFactory(Index index, @IndexSettings Settings indexSettings, Environment env, IndicesAnalysisService indicesAnalysisService, Map<String, TokenizerFactoryFactory> tokenizerFactories,
+                                                @Assisted String name, @Assisted Settings settings, ThreadPool threadPool, IndicesService indicesService) {
         super(index, indexSettings, name, settings);
         this.environment = env;
         this.remoteAddr = settings.get("remote_synonyms_path");
 
 
         if (remoteAddr != null) {
+            String tokenizerName = settings.get("tokenizer", "whitespace");
+
+            TokenizerFactoryFactory tokenizerFactoryFactory = tokenizerFactories.get(tokenizerName);
+            logger.info("tokenizerName {}", tokenizerName);
+            if (tokenizerFactoryFactory == null) {
+                return;
+                //throw new ElasticsearchIllegalArgumentException("test");
+
+                //tokenizerFactoryFactory = indicesAnalysisService.tokenizerFactoryFactory(tokenizerName);
+            }
+            // if (tokenizerFactoryFactory == null) {
+            //     throw new ElasticsearchIllegalArgumentException("failed to find tokenizer [" + tokenizerName + "] for synonym token filter");
+            // }
+            final TokenizerFactory tokenizerFactory = tokenizerFactoryFactory.create(tokenizerName, settings);
+
             this.analyzer = new Analyzer() {
                 @Override
                 protected TokenStreamComponents createComponents(String fieldName, Reader reader) {
-                    Tokenizer tokenizer = new WhitespaceTokenizer(Lucene.ANALYZER_VERSION, reader);
-                    TokenStream stream = new LowerCaseFilter(Lucene.ANALYZER_VERSION, tokenizer);
+                    Tokenizer tokenizer = tokenizerFactory == null ? new WhitespaceTokenizer(Lucene.ANALYZER_VERSION, reader) : tokenizerFactory.create(reader);
+                    TokenStream stream = true ? new LowerCaseFilter(Lucene.ANALYZER_VERSION, tokenizer) : tokenizer;
+                    //Tokenizer tokenizer = new WhitespaceTokenizer(Lucene.ANALYZER_VERSION, reader);
+                    //TokenStream stream =new LowerCaseFilter(Lucene.ANALYZER_VERSION, tokenizer);
+
                     return new TokenStreamComponents(tokenizer, stream);
                 }
             };
@@ -95,9 +129,19 @@ public class FileRemoteSynonymTokenFilterFactory extends AbstractTokenFilterFact
             } catch (Exception e) {
                 e.printStackTrace();
             }
+            //this.indexName = index.getName();
 
+            scheduledFuture = threadPool.scheduleWithFixedDelay(new FileRemoteMonitor(), timeValueSeconds(5));
+            // indicesService.indicesLifecycle().addListener(new IndicesLifecycle.Listener() {
+            //     @Override
+            //     public void beforeIndexClosed(IndexService indexService) {
+            //         if (indexService.index().getName().equals(indexName)) {
+            //             scheduledFuture.cancel(false);
+            //         }
+            //     }
+            // });
 
-            pool.scheduleAtFixedRate(new FileRemoteMonitor(), 5, 60, TimeUnit.SECONDS);
+            //pool.scheduleAtFixedRate(new FileRemoteMonitor(), 5, 60, TimeUnit.SECONDS);
         }
 
 
