@@ -91,10 +91,7 @@ public class FileRemoteSynonymTokenFilterFactory extends AbstractTokenFilterFact
             TokenizerFactoryFactory tokenizerFactoryFactory = tokenizerFactories.get(tokenizerName);
             logger.info("tokenizerName {}", tokenizerName);
             if (tokenizerFactoryFactory == null) {
-                return;
-                //throw new ElasticsearchIllegalArgumentException("test");
-
-                //tokenizerFactoryFactory = indicesAnalysisService.tokenizerFactoryFactory(tokenizerName);
+                tokenizerFactoryFactory = indicesAnalysisService.tokenizerFactoryFactory(tokenizerName);
             }
             // if (tokenizerFactoryFactory == null) {
             //     throw new ElasticsearchIllegalArgumentException("failed to find tokenizer [" + tokenizerName + "] for synonym token filter");
