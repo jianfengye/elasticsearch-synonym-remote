@@ -45,8 +45,8 @@ index:
           remote_synonyms_path: "http://test.com/synonym.txt"  ## specify the remote_synonyms_path
 ```
 
-### Check Search Results
+### Reload Synonyms
 
-Try searching...
-
-    $ curl -XPOST "http://localhost:9200/elasticsearchtest/_analyze?analyzer=test_synonym" -d 'we are eng man i pad 汉语文字 gogo 1'
+* update remote_synonyms_path file, and update it's Last-Modified
+* close Index
+* open Index
