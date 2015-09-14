@@ -56,7 +56,6 @@ import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.ElasticsearchIllegalArgumentException;
 import java.util.concurrent.ScheduledFuture;
 import org.elasticsearch.indices.IndicesLifecycle;
-//import org.elasticsearch.index.service.IndexService;
 import org.elasticsearch.index.settings.IndexSettings;
 
 import static org.elasticsearch.common.unit.TimeValue.timeValueSeconds;
@@ -68,13 +67,11 @@ public class FileRemoteSynonymTokenFilterFactory extends AbstractTokenFilterFact
     private String remoteAddr;
     private String lastModified;
     private Analyzer analyzer;
-    //private String indexName;
+    private Integer reloadInterval = 0;
 
     private volatile ScheduledFuture scheduledFuture;
 
     public static ESLogger logger = Loggers.getLogger("synonym-remote");
-
-    //private static ScheduledExecutorService pool = Executors.newScheduledThreadPool(1);
     private static CloseableHttpClient httpclient = HttpClients.createDefault();
 
     @Inject
@@ -83,138 +80,98 @@ public class FileRemoteSynonymTokenFilterFactory extends AbstractTokenFilterFact
         super(index, indexSettings, name, settings);
         this.environment = env;
         this.remoteAddr = settings.get("remote_synonyms_path");
-
+        this.reloadInterval = settings.getAsInt("reload_interval", 10);
 
         if (remoteAddr != null) {
-            String tokenizerName = settings.get("tokenizer", "whitespace");
-
-            TokenizerFactoryFactory tokenizerFactoryFactory = tokenizerFactories.get(tokenizerName);
-            logger.info("tokenizerName {}", tokenizerName);
-            if (tokenizerFactoryFactory == null) {
-                tokenizerFactoryFactory = indicesAnalysisService.tokenizerFactoryFactory(tokenizerName);
-            }
-            // if (tokenizerFactoryFactory == null) {
-            //     throw new ElasticsearchIllegalArgumentException("failed to find tokenizer [" + tokenizerName + "] for synonym token filter");
-            // }
-            final TokenizerFactory tokenizerFactory = tokenizerFactoryFactory.create(tokenizerName, settings);
 
             this.analyzer = new Analyzer() {
                 @Override
                 protected TokenStreamComponents createComponents(String fieldName, Reader reader) {
-                    Tokenizer tokenizer = tokenizerFactory == null ? new WhitespaceTokenizer(Lucene.ANALYZER_VERSION, reader) : tokenizerFactory.create(reader);
-                    TokenStream stream = true ? new LowerCaseFilter(Lucene.ANALYZER_VERSION, tokenizer) : tokenizer;
-                    //Tokenizer tokenizer = new WhitespaceTokenizer(Lucene.ANALYZER_VERSION, reader);
-                    //TokenStream stream =new LowerCaseFilter(Lucene.ANALYZER_VERSION, tokenizer);
+                    Tokenizer tokenizer = new WhitespaceTokenizer(Lucene.ANALYZER_VERSION, reader);
+                    TokenStream stream =new LowerCaseFilter(Lucene.ANALYZER_VERSION, tokenizer);
 
                     return new TokenStreamComponents(tokenizer, stream);
                 }
             };
 
-            // 注册Monitor
+            // set monitor
             logger.info("load remote_synonyms_path {} ", remoteAddr);
 
             try{
                 Reader rulesReader = new InputStreamReader(new URL(remoteAddr).openStream(), Charsets.UTF_8);
-
-                logger.info("FileRemoteMonitor load file");
                 SynonymMap.Builder parser = null;
 
                 parser = new SolrSynonymParser(true, true, analyzer);
                 ((SolrSynonymParser) parser).parse(rulesReader);
-                logger.info("FileRemoteMonitor build");
                 synonymMap = parser.build();
             } catch (Exception e) {
                 e.printStackTrace();
             }
-            //this.indexName = index.getName();
 
-            scheduledFuture = threadPool.scheduleWithFixedDelay(new FileRemoteMonitor(), timeValueSeconds(5));
-            // indicesService.indicesLifecycle().addListener(new IndicesLifecycle.Listener() {
-            //     @Override
-            //     public void beforeIndexClosed(IndexService indexService) {
-            //         if (indexService.index().getName().equals(indexName)) {
-            //             scheduledFuture.cancel(false);
-            //         }
-            //     }
-            // });
-
-            //pool.scheduleAtFixedRate(new FileRemoteMonitor(), 5, 60, TimeUnit.SECONDS);
+            scheduledFuture = threadPool.scheduleWithFixedDelay(new FileRemoteMonitor(), timeValueSeconds(this.reloadInterval));
         }
-
 
     }
 
     @Override
     public TokenStream create(TokenStream tokenStream) {
-        // fst is null means no synonyms
-        logger.info("get new synonyms token");
         return synonymMap.fst == null ? tokenStream : new SynonymFilter(tokenStream, synonymMap, true);
     }
 
     public class FileRemoteMonitor implements Runnable {
 
+        @Override
+        public void run()
+        {
+            //exceed time
+            RequestConfig rc = RequestConfig.custom().setConnectionRequestTimeout(10*1000)
+                    .setConnectTimeout(10*1000).setSocketTimeout(15*1000).build();
 
-            @Override
-            public void run()
-            {
-                logger.info("FileRemoteMonitor run");
-                //超时设置
-        		RequestConfig rc = RequestConfig.custom().setConnectionRequestTimeout(10*1000)
-        				.setConnectTimeout(10*1000).setSocketTimeout(15*1000).build();
+            HttpHead head = new HttpHead(remoteAddr);
+            head.setConfig(rc);
 
-        		HttpHead head = new HttpHead(remoteAddr);
-        		head.setConfig(rc);
+            //request modified
+            if (lastModified != null) {
+                head.setHeader("If-Modified-Since", lastModified);
+            }
 
-        		//设置请求头
-        		if (lastModified != null) {
-        			head.setHeader("If-Modified-Since", lastModified);
-        		}
+            CloseableHttpResponse response = null;
+            try {
+                response = httpclient.execute(head);
 
+                //return 200 it will reload
+                if(response.getStatusLine().getStatusCode() == 200){
+                    if (!response.getLastHeader("Last-Modified").getValue().equalsIgnoreCase(lastModified)) {
+                        Reader rulesReader = new InputStreamReader(new URL(remoteAddr).openStream(), Charsets.UTF_8);
 
-        		CloseableHttpResponse response = null;
-        		try {
+                        SynonymMap.Builder parser = null;
+                        synonymMap = null;
 
-        			response = httpclient.execute(head);
+                        parser = new SolrSynonymParser(true, true, analyzer);
+                        ((SolrSynonymParser) parser).parse(rulesReader);
+                        synonymMap = parser.build();
 
-        			//返回200 才做操作
-        			if(response.getStatusLine().getStatusCode()==200){
-                        logger.info("FileRemoteMonitor load code");
-        				if (!response.getLastHeader("Last-Modified").getValue().equalsIgnoreCase(lastModified)) {
-                            logger.info("FileRemoteMonitor load reader");
-                            Reader rulesReader = new InputStreamReader(new URL(remoteAddr).openStream(), Charsets.UTF_8);
+                        lastModified = response.getLastHeader("Last-Modified").getValue();
+                        logger.info("remote_synonyms_path {} load success", remoteAddr);
+                    }
+                } else if (response.getStatusLine().getStatusCode() == 304) {
+                    // do nothing
+                } else {
+                    logger.info("remote_synonyms_path {} return bad code {}" , remoteAddr , response.getStatusLine().getStatusCode() );
+                }
 
-                            logger.info("FileRemoteMonitor load file");
-                            SynonymMap.Builder parser = null;
-                            synonymMap = null;
-
-                            parser = new SolrSynonymParser(true, true, analyzer);
-                            ((SolrSynonymParser) parser).parse(rulesReader);
-                            logger.info("FileRemoteMonitor build");
-                            synonymMap = parser.build();
-
-                            lastModified = response.getLastHeader("Last-Modified").getValue();
-        				}
-        			}else if (response.getStatusLine().getStatusCode()==304) {
-                        logger.info("FileRemoteMonitor file nothing change");
-                        //没有修改，不做操作
-
-        				//noop
-        			}else{
-        				logger.info("remote_synonyms_path {} return bad code {}" , remoteAddr , response.getStatusLine().getStatusCode() );
-        			}
-
-        		} catch (Exception e) {
-        			logger.info("remote_synonyms_path {} error!",e , remoteAddr);
-        		}finally{
-        			try {
-        				if (response != null) {
-        					response.close();
-        				}
-        			} catch (Exception e) {
-        				e.printStackTrace();
-        			}
-        		}
+            } catch (Exception e) {
+                logger.info("remote_synonyms_path {} error!",e , remoteAddr);
+            } finally {
+                try {
+                    if (response != null) {
+                        response.close();
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
             }
         }
+    }
 
 }
