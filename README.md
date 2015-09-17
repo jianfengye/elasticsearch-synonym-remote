@@ -15,7 +15,7 @@ Elasticsearch Synonym Remote Plugin provides file_remote_synonym filter
 
 ## Installation
 
-    $ $ES_HOME/bin/plugin --install github.com/jianfengye/elasticsearch-analysis-synonym/1.5.0
+    $ $ES_HOME/bin/plugin --install file:\/\/path-to-releases/synonym-remote-1.0.zip
 
 ## Getting Started
 
