@@ -15,7 +15,7 @@ Elasticsearch Synonym Remote Plugin provides file_remote_synonym filter
 
 ## Installation
 
-    $ $ES_HOME/bin/plugin --install file:\/\/path-to-releases/synonym-remote-1.0.zip
+    $ $ES_HOME/bin/plugin --install elasticsearch-synonym-remote --url file:\/\/path-to-releases/synonym-remote-1.0.zip
 
 ## Getting Started
 
